@@ -7,6 +7,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FLUTTER_VERSION: 3.35.2
 
 jobs:
   build:
@@ -602,10 +603,9 @@ jobs:
           echo "Using Flutter $FLUTTER_VERSION"
 
       - name: Setup Flutter SDK
-        if: env.type == 'flutter'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: ${{ env.FLUTTER_VERSION || '3.35.2' }}
           channel: stable
           cache: true
 
