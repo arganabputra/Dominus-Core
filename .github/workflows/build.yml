@@ -618,26 +618,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Cache pub dependencies
-        if: env.type == 'flutter'
-        uses: actions/cache@v4
-        with:
-          path: ~/.pub-cache
-          key: pub-cache-${{ runner.os }}
-          restore-keys: |
-            pub-cache-${{ runner.os }}
-
-      - name: Cache Gradle dependencies (Android build Flutter)
-        if: env.type == 'flutter'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-flutter-${{ runner.os }}
-          restore-keys: |
-            gradle-flutter-${{ runner.os }}
-
       - name: Build Flutter APK with auto-detection and auto-fix
         if: env.type == 'flutter'
         shell: bash
@@ -757,23 +737,34 @@ jobs:
           }
 
           # Main build loop with retries
+          TIMING_LOG="../timing_report.txt"
+          echo "=== Timing Report ===" > "$TIMING_LOG"
+          LOOP_START=$(date +%s)
+
           while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
             echo "=== Attempt $RETRY_COUNT of $MAX_RETRIES ==="
 
             # Try flutter pub get
+            T0=$(date +%s)
             if try_pub_get; then
+              T1=$(date +%s)
+              echo "[Attempt $RETRY_COUNT] pub get: $((T1-T0))s" | tee -a "$TIMING_LOG"
               echo "✅ flutter pub get succeeded"
 
               # Auto-fix isu yang dikenali analyzer (deprecated API, import, dll) sebelum build
               echo "=== Menjalankan dart fix --apply ==="
               dart fix --apply 2>&1 | tee -a "$PUB_LOG" || true
+              T2=$(date +%s)
+              echo "[Attempt $RETRY_COUNT] dart fix: $((T2-T1))s" | tee -a "$TIMING_LOG"
 
               BUILD_LOG="../build_error.log"
 
               # Try build
               if [ "$BUILD_MODE" = "release" ]; then
                 if flutter build apk --release 2>&1 | tee "$BUILD_LOG"; then
+                  T3=$(date +%s)
+                  echo "[Attempt $RETRY_COUNT] flutter build apk --release: $((T3-T2))s" | tee -a "$TIMING_LOG"
                   SUCCESS=true
                   echo "✅ Build successful!"
                   break
@@ -784,6 +775,8 @@ jobs:
                 fi
               else
                 if flutter build apk --debug 2>&1 | tee "$BUILD_LOG"; then
+                  T3=$(date +%s)
+                  echo "[Attempt $RETRY_COUNT] flutter build apk --debug: $((T3-T2))s" | tee -a "$TIMING_LOG"
                   SUCCESS=true
                   echo "✅ Build successful!"
                   break
@@ -799,6 +792,10 @@ jobs:
               rm -f pubspec.lock
             fi
           done
+
+          LOOP_END=$(date +%s)
+          echo "=== Total: $((LOOP_END-LOOP_START))s, percobaan: $RETRY_COUNT dari $MAX_RETRIES ===" | tee -a "$TIMING_LOG"
+          cat "$TIMING_LOG"
 
           if [ "$SUCCESS" = false ]; then
             echo "❌ Build failed after $MAX_RETRIES attempts"
@@ -834,6 +831,14 @@ jobs:
         with:
           name: error-log
           path: error_summary.txt
+          if-no-files-found: ignore
+
+      - name: Upload timing report
+        if: always() && env.type == 'flutter'
+        uses: actions/upload-artifact@v4
+        with:
+          name: timing-report
+          path: timing_report.txt
           if-no-files-found: ignore
 
       - name: Upload APK
