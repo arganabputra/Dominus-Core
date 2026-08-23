@@ -15,6 +15,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Record workflow start time
+        run: echo "WORKFLOW_START=$(date +%s)" >> $GITHUB_ENV
+
       - name: Read build config
         id: config
         run: |
@@ -39,6 +42,12 @@ jobs:
 
       - name: Install ImageMagick
         run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Log setup duration (JDK + Android SDK + ImageMagick)
+        run: |
+          NOW=$(date +%s)
+          echo "=== Timing Report ===" > setup_timing.txt
+          echo "[Setup] Checkout -> JDK+AndroidSDK+ImageMagick selesai: $((NOW-WORKFLOW_START))s" | tee -a setup_timing.txt
 
       - name: Cache SDKMAN Gradle 8.9
         id: cache-sdkman-gradle
@@ -618,12 +627,22 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Log setup duration (Flutter SDK ready)
+        if: env.type == 'flutter'
+        run: |
+          NOW=$(date +%s)
+          echo "[Setup] Checkout -> Flutter SDK $FLUTTER_VERSION siap: $((NOW-WORKFLOW_START))s" | tee -a setup_timing.txt
+
       - name: Build Flutter APK with auto-detection and auto-fix
         if: env.type == 'flutter'
         shell: bash
         run: |
           set -e
           set -o pipefail
+
+          # Gabungin timing report fase setup (sebelum masuk fase compile)
+          cp setup_timing.txt timing_report_pre.txt 2>/dev/null || true
+
           cd flutter-project
 
           echo "=== Flutter Version ==="
@@ -739,6 +758,9 @@ jobs:
           # Main build loop with retries
           TIMING_LOG="../timing_report.txt"
           echo "=== Timing Report ===" > "$TIMING_LOG"
+          if [ -f ../timing_report_pre.txt ]; then
+            tail -n +2 ../timing_report_pre.txt >> "$TIMING_LOG"
+          fi
           LOOP_START=$(date +%s)
 
           while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
