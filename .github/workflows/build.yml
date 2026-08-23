@@ -15,6 +15,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Read build config
+        id: config
+        run: |
+          if [ -f build-config.json ]; then
+            echo "type=$(jq -r .type build-config.json)" >> $GITHUB_ENV
+            echo "url=$(jq -r .url build-config.json)" >> $GITHUB_ENV
+            echo "app_name=$(jq -r .app_name build-config.json)" >> $GITHUB_ENV
+            echo "build_type=$(jq -r .build_type build-config.json)" >> $GITHUB_ENV
+            cat build-config.json
+          else
+            echo "type=unknown" >> $GITHUB_ENV
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -29,32 +42,20 @@ jobs:
 
       - name: Cache SDKMAN Gradle 8.9
         id: cache-sdkman-gradle
+        if: env.type == 'web2apk'
         uses: actions/cache@v4
         with:
           path: ~/.sdkman
           key: sdkman-gradle-8.9-${{ runner.os }}
 
       - name: Install Gradle
-        if: steps.cache-sdkman-gradle.outputs.cache-hit != 'true'
+        if: env.type == 'web2apk' && steps.cache-sdkman-gradle.outputs.cache-hit != 'true'
         run: |
           curl -s "https://get.sdkman.io" | bash
           source "$HOME/.sdkman/bin/sdkman-init.sh"
           sdk install gradle 8.9
           sdk use gradle 8.9
           gradle --version
-
-      - name: Read build config
-        id: config
-        run: |
-          if [ -f build-config.json ]; then
-            echo "type=$(jq -r .type build-config.json)" >> $GITHUB_ENV
-            echo "url=$(jq -r .url build-config.json)" >> $GITHUB_ENV
-            echo "app_name=$(jq -r .app_name build-config.json)" >> $GITHUB_ENV
-            echo "build_type=$(jq -r .build_type build-config.json)" >> $GITHUB_ENV
-            cat build-config.json
-          else
-            echo "type=unknown" >> $GITHUB_ENV
-          fi
 
       - name: Generate keystore for signing (all builds)
         run: |
@@ -625,6 +626,17 @@ jobs:
           key: pub-cache-${{ runner.os }}
           restore-keys: |
             pub-cache-${{ runner.os }}
+
+      - name: Cache Gradle dependencies (Android build Flutter)
+        if: env.type == 'flutter'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-flutter-${{ runner.os }}
+          restore-keys: |
+            gradle-flutter-${{ runner.os }}
 
       - name: Build Flutter APK with auto-detection and auto-fix
         if: env.type == 'flutter'
