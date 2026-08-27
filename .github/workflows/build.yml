@@ -15,8 +15,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Record workflow start time
-        run: echo "WORKFLOW_START=$(date +%s)" >> $GITHUB_ENV
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install dependencies (ImageMagick, jq, unzip, curl)
+        run: sudo apt-get update && sudo apt-get install -y imagemagick jq unzip curl
+
+      - name: Install Gradle
+        run: |
+          curl -s "https://get.sdkman.io" | bash
+          source "$HOME/.sdkman/bin/sdkman-init.sh"
+          sdk install gradle 8.9
+          sdk use gradle 8.9
+          gradle --version
 
       - name: Read build config
         id: config
@@ -30,41 +47,6 @@ jobs:
           else
             echo "type=unknown" >> $GITHUB_ENV
           fi
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Install ImageMagick
-        run: sudo apt-get update && sudo apt-get install -y imagemagick
-
-      - name: Log setup duration (JDK + Android SDK + ImageMagick)
-        run: |
-          NOW=$(date +%s)
-          echo "=== Timing Report ===" > setup_timing.txt
-          echo "[Setup] Checkout -> JDK+AndroidSDK+ImageMagick selesai: $((NOW-WORKFLOW_START))s" | tee -a setup_timing.txt
-
-      - name: Cache SDKMAN Gradle 8.9
-        id: cache-sdkman-gradle
-        if: env.type == 'web2apk'
-        uses: actions/cache@v4
-        with:
-          path: ~/.sdkman
-          key: sdkman-gradle-8.9-${{ runner.os }}
-
-      - name: Install Gradle
-        if: env.type == 'web2apk' && steps.cache-sdkman-gradle.outputs.cache-hit != 'true'
-        run: |
-          curl -s "https://get.sdkman.io" | bash
-          source "$HOME/.sdkman/bin/sdkman-init.sh"
-          sdk install gradle 8.9
-          sdk use gradle 8.9
-          gradle --version
 
       - name: Generate keystore for signing (all builds)
         run: |
@@ -627,22 +609,12 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Log setup duration (Flutter SDK ready)
-        if: env.type == 'flutter'
-        run: |
-          NOW=$(date +%s)
-          echo "[Setup] Checkout -> Flutter SDK $FLUTTER_VERSION siap: $((NOW-WORKFLOW_START))s" | tee -a setup_timing.txt
-
       - name: Build Flutter APK with auto-detection and auto-fix
         if: env.type == 'flutter'
         shell: bash
         run: |
           set -e
           set -o pipefail
-
-          # Gabungin timing report fase setup (sebelum masuk fase compile)
-          cp setup_timing.txt timing_report_pre.txt 2>/dev/null || true
-
           cd flutter-project
 
           echo "=== Flutter Version ==="
@@ -756,37 +728,23 @@ jobs:
           }
 
           # Main build loop with retries
-          TIMING_LOG="../timing_report.txt"
-          echo "=== Timing Report ===" > "$TIMING_LOG"
-          if [ -f ../timing_report_pre.txt ]; then
-            tail -n +2 ../timing_report_pre.txt >> "$TIMING_LOG"
-          fi
-          LOOP_START=$(date +%s)
-
           while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
             echo "=== Attempt $RETRY_COUNT of $MAX_RETRIES ==="
 
             # Try flutter pub get
-            T0=$(date +%s)
             if try_pub_get; then
-              T1=$(date +%s)
-              echo "[Attempt $RETRY_COUNT] pub get: $((T1-T0))s" | tee -a "$TIMING_LOG"
               echo "✅ flutter pub get succeeded"
 
               # Auto-fix isu yang dikenali analyzer (deprecated API, import, dll) sebelum build
               echo "=== Menjalankan dart fix --apply ==="
               dart fix --apply 2>&1 | tee -a "$PUB_LOG" || true
-              T2=$(date +%s)
-              echo "[Attempt $RETRY_COUNT] dart fix: $((T2-T1))s" | tee -a "$TIMING_LOG"
 
               BUILD_LOG="../build_error.log"
 
               # Try build
               if [ "$BUILD_MODE" = "release" ]; then
                 if flutter build apk --release 2>&1 | tee "$BUILD_LOG"; then
-                  T3=$(date +%s)
-                  echo "[Attempt $RETRY_COUNT] flutter build apk --release: $((T3-T2))s" | tee -a "$TIMING_LOG"
                   SUCCESS=true
                   echo "✅ Build successful!"
                   break
@@ -797,8 +755,6 @@ jobs:
                 fi
               else
                 if flutter build apk --debug 2>&1 | tee "$BUILD_LOG"; then
-                  T3=$(date +%s)
-                  echo "[Attempt $RETRY_COUNT] flutter build apk --debug: $((T3-T2))s" | tee -a "$TIMING_LOG"
                   SUCCESS=true
                   echo "✅ Build successful!"
                   break
@@ -814,10 +770,6 @@ jobs:
               rm -f pubspec.lock
             fi
           done
-
-          LOOP_END=$(date +%s)
-          echo "=== Total: $((LOOP_END-LOOP_START))s, percobaan: $RETRY_COUNT dari $MAX_RETRIES ===" | tee -a "$TIMING_LOG"
-          cat "$TIMING_LOG"
 
           if [ "$SUCCESS" = false ]; then
             echo "❌ Build failed after $MAX_RETRIES attempts"
@@ -853,14 +805,6 @@ jobs:
         with:
           name: error-log
           path: error_summary.txt
-          if-no-files-found: ignore
-
-      - name: Upload timing report
-        if: always() && env.type == 'flutter'
-        uses: actions/upload-artifact@v4
-        with:
-          name: timing-report
-          path: timing_report.txt
           if-no-files-found: ignore
 
       - name: Upload APK
